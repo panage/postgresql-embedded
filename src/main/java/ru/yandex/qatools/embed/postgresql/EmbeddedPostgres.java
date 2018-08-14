@@ -7,19 +7,24 @@ import de.flapdoodle.embed.process.io.directories.FixedPath;
 import de.flapdoodle.embed.process.runtime.ICommandLinePostProcessor;
 import de.flapdoodle.embed.process.store.PostgresArtifactStoreBuilder;
 import ru.yandex.qatools.embed.postgresql.config.AbstractPostgresConfig;
-import ru.yandex.qatools.embed.postgresql.config.PostgresDownloadConfigBuilder;
 import ru.yandex.qatools.embed.postgresql.config.PostgresConfig;
+import ru.yandex.qatools.embed.postgresql.config.PostgresDownloadConfigBuilder;
 import ru.yandex.qatools.embed.postgresql.config.RuntimeConfigBuilder;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static java.util.Optional.ofNullable;
+import static ru.yandex.qatools.embed.postgresql.config.AbstractPostgresConfig.*;
 import static ru.yandex.qatools.embed.postgresql.distribution.Version.Main.PRODUCTION;
 import static ru.yandex.qatools.embed.postgresql.util.SocketUtil.findFreePort;
 
@@ -163,10 +168,10 @@ public class EmbeddedPostgres implements AutoCloseable {
                         List<String> additionalParams) throws IOException {
         final PostgresStarter<PostgresExecutable, PostgresProcess> runtime = PostgresStarter.getInstance(runtimeConfig);
         config = new PostgresConfig(version,
-                new AbstractPostgresConfig.Net(host, port),
-                new AbstractPostgresConfig.Storage(dbName, dataDir),
-                new AbstractPostgresConfig.Timeout(),
-                new AbstractPostgresConfig.Credentials(user, password)
+                new Net(host, port),
+                new Storage(dbName, dataDir),
+                new Timeout(),
+                new Credentials(user, password)
         );
         config.getAdditionalInitDbParams().addAll(additionalParams);
         PostgresExecutable exec = runtime.prepare(config);
@@ -213,7 +218,30 @@ public class EmbeddedPostgres implements AutoCloseable {
     }
 
     public void stop() {
-        getProcess().orElseThrow(() -> new IllegalStateException("Cannot stop not started instance!")).stop();
+        PostgresProcess postgresProcess = getProcess()
+                .orElseThrow(() -> new IllegalStateException("Cannot stop not started instance!"));
+        postgresProcess.stop();
+
+        // If we want to persist, we will specify permanent directory
+        Storage storage = postgresProcess.getConfig().storage();
+        if (!storage.isTmpDir()) {
+            return;
+        }
+
+        File dbDir = storage.dbDir();
+        if (!dbDir.exists()) {
+            return;
+        }
+
+        try (Stream<Path> stream = Files.walk(dbDir.toPath())) {
+            stream.sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .filter(File::exists)
+                    .peek(System.out::println)
+                    .forEach(File::delete);
+        } catch (IOException e) {
+            e.printStackTrace(); // TODO
+        }
     }
 
     @Override
